@@ -9,11 +9,15 @@
  * `./src/main.js` using webpack. This gives us some performance wins.
  */
 import path from 'path';
-import { app, BrowserWindow, shell, ipcMain } from 'electron';
+import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
+import { exec } from 'child_process';
+import Store from 'electron-store';
+
+const store = new Store()
 
 class AppUpdater {
   constructor() {
@@ -72,10 +76,9 @@ const createWindow = async () => {
   mainWindow = new BrowserWindow({
     width: 500,
     height: 500,
-    icon: getAssetPath('icon.png'),
+    icon: getAssetPath('happy.png'),
     transparent: true, // Make the window transparent
     frame: false, // Disable the default frame
-    type: 'toolbar',
     hasShadow: false, // Remove the shadow
     alwaysOnTop: true, // Make the window always on top
     webPreferences: {
@@ -85,7 +88,7 @@ const createWindow = async () => {
     },
   });
 
-  mainWindow.loadURL(resolveHtmlPath('index.html'));
+  await mainWindow.loadURL(resolveHtmlPath('index.html'));
 
   mainWindow.on('ready-to-show', () => {
     if (!mainWindow) {
@@ -139,3 +142,84 @@ app
     });
   })
   .catch(console.log);
+
+
+ipcMain.handle('run-command', (event, command) => {
+  return new Promise((resolve, reject) => {
+    const directory = store.get('currentFolder') as string;
+    try {
+      exec(command, { cwd: directory }, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`error: ${error.message}`);
+          resolve(error.message);
+          return;
+        }
+        if (stderr) {
+          console.error(`stderr: ${stderr}`);
+          resolve(stderr);
+          return;
+        }
+        console.log(`stdout: ${stdout}`);
+        resolve(stdout);
+      });
+    } catch (error) {
+      resolve((error as Error).message);
+    }
+  });
+});
+
+ipcMain.on('close-app', () => {
+  app.quit();
+})
+
+ipcMain.on('minimize-app', () => {
+  mainWindow?.minimize();
+})
+
+ipcMain.on('maximize-app', () => {
+  if (mainWindow?.isMaximized()) {
+    mainWindow?.unmaximize();
+  } else {
+    mainWindow?.maximize();
+  }
+})
+
+ipcMain.handle('store-set', (event, key, value) => {
+  return new Promise<void>((resolve) => {
+    console.log('store-set', key, value);
+    store.set(key, value);
+    resolve();
+  })
+})
+
+ipcMain.handle('store-get', (event, key) => {
+  return new Promise((resolve, reject) => {
+    const value = store.get(key);
+    console.log('store-get', key, value);
+    if (value) {
+      resolve(value);
+    } else {
+      resolve(null);
+    }
+  })
+})
+
+ipcMain.on('store-delete', (event, key) => {
+  store.delete(key);
+})
+
+
+ipcMain.handle('open-directory-dialog', async (event) => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory']
+  });
+  if (result.canceled) {
+    return null;
+  } else {
+    return result.filePaths[0]; // The selected directory path
+  }
+});
+
+ipcMain.handle('set-current-folder', async (event, folder: string) => {
+  store.set('currentFolder', folder);
+});
